@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Form,
   ActionPanel,
@@ -7,11 +7,12 @@ import {
   Toast,
   popToRoot,
   LaunchProps,
+  Application,
 } from "@raycast/api";
 import { TimeUnit, ActionType, SystemCommand, Timer, TimerAction } from "./types";
 import { convertToMilliseconds, generateTimerId, formatDuration } from "./utils";
 import { saveTimer } from "./storage";
-import { executeAction, COMMON_APPLICATIONS, SYSTEM_COMMANDS } from "./actions";
+import { executeAction, getAllInstalledApplications, SYSTEM_COMMANDS } from "./actions";
 
 interface FormValues {
   timeValue: string;
@@ -19,6 +20,7 @@ interface FormValues {
   actionType: ActionType;
   application: string;
   systemCommand: SystemCommand;
+  raycastCommand: string;
   timerName: string;
 }
 
@@ -26,6 +28,21 @@ export default function SetTimer(props: LaunchProps) {
   const [timeValue, setTimeValue] = useState<string>("10");
   const [timeUnit, setTimeUnit] = useState<TimeUnit>(TimeUnit.MINUTES);
   const [actionType, setActionType] = useState<ActionType>(ActionType.APPLICATION);
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [isLoadingApps, setIsLoadingApps] = useState(true);
+
+  useEffect(() => {
+    async function loadApplications() {
+      setIsLoadingApps(true);
+      const apps = await getAllInstalledApplications();
+      // Sort apps alphabetically by name
+      apps.sort((a, b) => a.name.localeCompare(b.name));
+      setApplications(apps);
+      setIsLoadingApps(false);
+    }
+
+    loadApplications();
+  }, []);
 
   async function handleSubmit(values: FormValues) {
     const timeVal = parseFloat(values.timeValue);
@@ -44,17 +61,31 @@ export default function SetTimer(props: LaunchProps) {
       unit: values.timeUnit,
     });
 
-    const action: TimerAction = {
-      type: values.actionType,
-      value:
-        values.actionType === ActionType.APPLICATION
-          ? values.application
-          : values.systemCommand,
-      displayName:
-        values.actionType === ActionType.APPLICATION
-          ? values.application
-          : SYSTEM_COMMANDS.find((cmd) => cmd.id === values.systemCommand)?.name || values.systemCommand,
-    };
+    let action: TimerAction;
+
+    if (values.actionType === ActionType.APPLICATION) {
+      const selectedApp = applications.find((app) => app.bundleId === values.application);
+      action = {
+        type: ActionType.APPLICATION,
+        value: selectedApp?.name || values.application,
+        displayName: selectedApp?.name || values.application,
+        bundleId: values.application,
+      };
+    } else if (values.actionType === ActionType.SYSTEM_COMMAND) {
+      const cmd = SYSTEM_COMMANDS.find((c) => c.id === values.systemCommand);
+      action = {
+        type: ActionType.SYSTEM_COMMAND,
+        value: values.systemCommand,
+        displayName: cmd?.name || values.systemCommand,
+      };
+    } else {
+      // Raycast command
+      action = {
+        type: ActionType.RAYCAST_COMMAND,
+        value: values.raycastCommand,
+        displayName: values.raycastCommand,
+      };
+    }
 
     const timer: Timer = {
       id: generateTimerId(),
@@ -95,15 +126,26 @@ export default function SetTimer(props: LaunchProps) {
     await popToRoot();
   }
 
+  // Group system commands by category
+  const groupedCommands = SYSTEM_COMMANDS.reduce((acc, cmd) => {
+    const category = (cmd as any).category || "Other";
+    if (!acc[category]) {
+      acc[category] = [];
+    }
+    acc[category].push(cmd);
+    return acc;
+  }, {} as Record<string, typeof SYSTEM_COMMANDS>);
+
   return (
     <Form
+      isLoading={isLoadingApps}
       actions={
         <ActionPanel>
           <Action.SubmitForm title="Set Timer" onSubmit={handleSubmit} />
         </ActionPanel>
       }
     >
-      <Form.Description text="Set a timer to automatically run an application or system command" />
+      <Form.Description text="Set a timer to automatically run an application, system command, or Raycast command" />
 
       <Form.TextField
         id="timerName"
@@ -140,8 +182,9 @@ export default function SetTimer(props: LaunchProps) {
         value={actionType}
         onChange={(newValue) => setActionType(newValue as ActionType)}
       >
-        <Form.Dropdown.Item value={ActionType.APPLICATION} title="Open Application" />
-        <Form.Dropdown.Item value={ActionType.SYSTEM_COMMAND} title="System Command" />
+        <Form.Dropdown.Item value={ActionType.APPLICATION} title="📱 Open Application" />
+        <Form.Dropdown.Item value={ActionType.SYSTEM_COMMAND} title="⚙️ System Command" />
+        <Form.Dropdown.Item value={ActionType.RAYCAST_COMMAND} title="⚡ Raycast Command" />
       </Form.Dropdown>
 
       {actionType === ActionType.APPLICATION && (
@@ -149,9 +192,15 @@ export default function SetTimer(props: LaunchProps) {
           id="application"
           title="Application"
           placeholder="Select an application"
+          storeValue
         >
-          {COMMON_APPLICATIONS.map((app) => (
-            <Form.Dropdown.Item key={app} value={app} title={app} />
+          {applications.map((app) => (
+            <Form.Dropdown.Item
+              key={app.bundleId}
+              value={app.bundleId || app.path}
+              title={app.name}
+              icon={{ fileIcon: app.path }}
+            />
           ))}
         </Form.Dropdown>
       )}
@@ -162,14 +211,30 @@ export default function SetTimer(props: LaunchProps) {
           title="System Command"
           placeholder="Select a system command"
         >
-          {SYSTEM_COMMANDS.map((cmd) => (
-            <Form.Dropdown.Item
-              key={cmd.id}
-              value={cmd.id}
-              title={`${cmd.icon} ${cmd.name}`}
-            />
+          {Object.entries(groupedCommands).map(([category, commands]) => (
+            <Form.Dropdown.Section key={category} title={category}>
+              {commands.map((cmd) => (
+                <Form.Dropdown.Item
+                  key={cmd.id}
+                  value={cmd.id}
+                  title={`${cmd.icon} ${cmd.name}`}
+                />
+              ))}
+            </Form.Dropdown.Section>
           ))}
         </Form.Dropdown>
+      )}
+
+      {actionType === ActionType.RAYCAST_COMMAND && (
+        <>
+          <Form.TextField
+            id="raycastCommand"
+            title="Raycast Command Name"
+            placeholder="e.g., toggle-system-appearance"
+            info="Enter the name of a Raycast command to execute"
+          />
+          <Form.Description text="💡 Tip: You can find command names in Raycast Extensions preferences" />
+        </>
       )}
     </Form>
   );

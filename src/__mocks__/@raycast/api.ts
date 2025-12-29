@@ -21,6 +21,33 @@ export const closeMainWindow = jest.fn();
 export const popToRoot = jest.fn();
 export const confirmAlert = jest.fn();
 
+// Mock for getApplications
+export const getApplications = jest.fn().mockResolvedValue([
+  {
+    name: "Google Chrome",
+    bundleId: "com.google.Chrome",
+    path: "/Applications/Google Chrome.app",
+  },
+  {
+    name: "Safari",
+    bundleId: "com.apple.Safari",
+    path: "/Applications/Safari.app",
+  },
+  {
+    name: "Visual Studio Code",
+    bundleId: "com.microsoft.VSCode",
+    path: "/Applications/Visual Studio Code.app",
+  },
+]);
+
+// Mock for launchCommand
+export const launchCommand = jest.fn().mockResolvedValue(undefined);
+
+export const LaunchType = {
+  UserInitiated: "userInitiated",
+  Background: "background",
+};
+
 export const Alert = {
   ActionStyle: {
     Default: "default",
